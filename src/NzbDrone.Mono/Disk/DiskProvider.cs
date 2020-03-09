@@ -233,17 +233,25 @@ namespace NzbDrone.Mono.Disk
 
             try
             {
-                base.MoveFileInternal(source, destination);
+                if (move)
+                {
+                    base.MoveFileInternal(source, destination);
+                }
+                else
+                {
+                    base.CopyFileInternal(source, destination, overwrite);
+                }
             }
             catch (UnauthorizedAccessException)
             {
                 var srcInfo = new FileInfo(source);
                 var dstInfo = new FileInfo(destination);
                 var exists = dstInfo.Exists && srcInfo.Exists;
+
                 if (exists && dstInfo.Length == 0 && srcInfo.Length != 0)
                 {
                     // mono >=6.6 bug: zero length file since chmod happens at the start
-                    _logger.Debug("Mono failed to {3} file likely due to known mono bug, attempting to {3} directly. '{0}' -> '{1}'", source, destination, move ? "move" : "copy");
+                    _logger.Debug("Mono failed to {2} file likely due to known mono bug, attempting to {2} directly. '{0}' -> '{1}'", source, destination, move ? "move" : "copy");
 
                     try
                     {
@@ -259,29 +267,14 @@ namespace NzbDrone.Mono.Disk
                         // If it fails again then bail
                         throw;
                     }
-
-                    try
-                    {
-                        dstInfo.LastWriteTimeUtc = srcInfo.LastWriteTimeUtc;
-                    }
-                    catch
-                    {
-                        _logger.Debug("Unable to change last modified date for {0}, skipping.", destination);
-                    }
-
-                    if (move)
-                    {
-                        _logger.Trace("Removing source file {0}", source);
-                        File.Delete(source);
-                    }
                 }
                 else if (exists && dstInfo.Length == srcInfo.Length)
                 {
                     // mono 6.0, 6.4 bug: full length file since utime and chmod happens at the end
-                    _logger.Debug("Mono failed to {3} file likely due to known mono bug, attempting to {3} directly. '{0}' -> '{1}'", source, destination, move ? "move" : "copy");
+                    _logger.Debug("Mono failed to {2} file likely due to known mono bug, attempting to {2} directly. '{0}' -> '{1}'", source, destination, move ? "move" : "copy");
 
                     // Check at least part of the file since UnauthorizedAccess can happen due to legitimate reasons too
-                    var checkLength = (int)Math.Min(64 * 1204, dstInfo.Length);
+                    var checkLength = (int)Math.Min(64 * 1024, dstInfo.Length);
                     if (checkLength > 0)
                     {
                         var srcData = new byte[checkLength];
@@ -311,7 +304,15 @@ namespace NzbDrone.Mono.Disk
 
                         _logger.Trace("Copy was complete, finishing {0} operation", move ? "move" : "copy");
                     }
+                }
+                else
+                {
+                    // Unrecognized situation, the UnauthorizedAccess was unrelated
+                    throw;
+                }
 
+                if (exists)
+                {
                     try
                     {
                         dstInfo.LastWriteTimeUtc = srcInfo.LastWriteTimeUtc;
@@ -326,11 +327,6 @@ namespace NzbDrone.Mono.Disk
                         _logger.Trace("Removing source file {0}", source);
                         File.Delete(source);
                     }
-                }
-                else
-                {
-                    // Unrecognized situation, the UnauthorizedAccess was unrelated
-                    throw;
                 }
             }
         }
